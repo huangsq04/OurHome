@@ -32,8 +32,6 @@ APlayerCameraPawn::APlayerCameraPawn()
 	CameraComponent = CreateDefaultSubobject<UCameraComponent>(TEXT("CameraComponent0"));
 	CameraComponent->AttachToComponent(ArrowComponent0, FAttachmentTransformRules::KeepRelativeTransform);
 
-	MoveSpeed = 1.0;
-
 	PlanetActor = nullptr;
 }
 
@@ -50,6 +48,7 @@ void APlayerCameraPawn::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
+	LastDeltaTime = DeltaTime;
 	if (TargetPoint != FVector(0.0, 0.0, 0.0 ))
 	{
 		FVector ActorLocation = GetActorLocation();
@@ -63,7 +62,7 @@ void APlayerCameraPawn::Tick(float DeltaTime)
 		else
 		{
 			TargetNormalize.Normalize();
-			FVector Position = TargetNormalize * MoveSpeed + GetActorLocation();
+			FVector Position = TargetNormalize * MoveSpeed * DeltaTime + GetActorLocation();
 			ModifyLocation(Position);
 		}
 		if (Elevation > 600000)
@@ -76,17 +75,6 @@ void APlayerCameraPawn::Tick(float DeltaTime)
 	{
 		SetActorRotation(FRotationMatrix::MakeFromX(GetActorLocation() * -1.0).Rotator());
 		LastLocation = GetActorLocation();
-	}
-
-	float Sc = Elevation - PlanetActor->GetPlanetRadius();
-	Sc = FMath::Clamp(Sc, UpdateHeightMin, UpdateHeightMax);
-	float S = 1.0 - pow((Sc - UpdateHeightMin) / UpdateHeightMax, PowParam);
-	float V = FMath::Clamp(S, 0.1f, 1.0f) * Sc;
-	float Dis = (LastUpdatePlanetPoint - GetActorLocation()).Size();
-	if (V < Dis)
-	{
-		PlanetActor->AsyncUpdateTerrain();
-		LastUpdatePlanetPoint = GetActorLocation();
 	}
 }
 
@@ -108,7 +96,7 @@ void APlayerCameraPawn::MoveRight(float Val)
 	if (Val != 0.f)
 	{
 		TargetPoint = {0.0, 0.0, 0.0};
-		FVector Position = CameraComponent->GetRightVector() * Val * MoveSpeed + GetActorLocation();
+		FVector Position = CameraComponent->GetRightVector() * Val * MoveSpeed * LastDeltaTime + GetActorLocation();
 		ModifyLocation(Position, false);
 	}
 }
@@ -118,7 +106,7 @@ void APlayerCameraPawn::MoveForward(float Val)
 	if (Val != 0.f)
 	{
 		TargetPoint = {0.0, 0.0, 0.0};
-		FVector Position = CameraComponent->GetForwardVector() * Val * MoveSpeed + GetActorLocation();
+		FVector Position = CameraComponent->GetForwardVector() * Val * MoveSpeed * LastDeltaTime + GetActorLocation();
 		ModifyLocation(Position, false);
 	}
 }
@@ -138,13 +126,13 @@ void APlayerCameraPawn::LookUp(float Val)
 }
 void APlayerCameraPawn::AddMoveSpeed()
 {
-	MoveSpeedScale = MoveSpeedScale * 2.0;
+	MoveSpeed = MoveSpeed * 2.0;
 
 }
 
 void APlayerCameraPawn::SubMoveSpeed()
 {
-	MoveSpeedScale = MoveSpeedScale / 2.0;
+	MoveSpeed = MoveSpeed / 2.0;
 }
 void APlayerCameraPawn::MoveUp(float Val)
 {
@@ -153,10 +141,9 @@ void APlayerCameraPawn::MoveUp(float Val)
 		TargetPoint = {0.0, 0.0, 0.0};
 		FVector Vector = GetActorLocation();
 		Vector.Normalize();
-		FVector Position = Vector * Val * MoveSpeed + GetActorLocation();
+		FVector Position = Vector * Val * MoveSpeed * LastDeltaTime + GetActorLocation();
 		ModifyLocation(Position);
 	}
-
 }
 void APlayerCameraPawn::ModifyLocation(const FVector &Pos, bool IsModifyHeight)
 {
@@ -187,12 +174,6 @@ void APlayerCameraPawn::ModifyLocation(const FVector &Pos, bool IsModifyHeight)
 		if (IsModifyHeight)
 		{
 			Elevation = Pos.Size();
-		}
-
-		MoveSpeed = (Elevation - PlanetActor->GetPlanetRadius()) * MoveSpeedScale;
-		if (MoveSpeed < 0.0)
-		{
-			MoveSpeed = 1.0;
 		}
 	}
 
@@ -228,5 +209,22 @@ void APlayerCameraPawn::ChangePlanetMovemount(APlanetActor *Planet)
 		SetActorRotation(FRotationMatrix::MakeFromX(GetActorLocation() * -1.0).Rotator());
 		TargetPoint = { 0.0, 0.0, 0.0 };
 	}
+}
+float APlayerCameraPawn::GetPlayerHeight()
+{
+	return Elevation - PlanetActor->GetPlanetRadius();
+}
+
+float APlayerCameraPawn::GetPlayerMoveSpeed()
+{
+	return MoveSpeed;
+}
+
+void APlayerCameraPawn::SetComponentRelativeRotation(UPrimitiveComponent *Src, UPrimitiveComponent *Dst)
+{
+	Dst->SetRelativeRotation_Direct(ArrowComponent->GetRelativeRotation());
+	float Size = GetPlayerHeight() / 1000;
+	FVector Location(-Size, 0, 0);
+	Dst->SetRelativeLocation_Direct(Location);
 }
 #pragma optimize("", on)

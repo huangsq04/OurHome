@@ -19,5 +19,5 @@ public:
 	static TArray<int> GetHexObject(FIntVector Vector);
 
 	UFUNCTION(BlueprintCallable)
-		static float TempPointToSegDist(const FVector &A, const FVector &B, const FVector &P); //Temp
+	static float TempPointToSegDist(const FVector &A, const FVector &B, const FVector &P); //Temp
 };

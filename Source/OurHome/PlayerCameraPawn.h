@@ -24,7 +24,6 @@ protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
 
-	void ModifyLocation(const FVector &Pos, bool IsModifyHeight = true);
 
 public:	
 	// Called every frame
@@ -32,6 +31,8 @@ public:
 
 	// Called to bind functionality to input
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
+
+	void ModifyLocation(const FVector &Pos, bool IsModifyHeight = true);
 
 	UFUNCTION(BlueprintCallable, Category = "PlayerCameraPawn")
 	virtual void MoveForward(float Val);
@@ -57,6 +58,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "PlayerCameraPawn")
 	void ChangePlanetMovemount(APlanetActor *Planet);
 
+	UFUNCTION(BlueprintCallable, Category = "PlayerCameraPawn")
+	float GetPlayerHeight();
+
+	UFUNCTION(BlueprintCallable, Category = "PlayerCameraPawn")
+	float GetPlayerMoveSpeed();
+
 private:
 	void AddMoveSpeed();
 
@@ -66,6 +73,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "PlayerCameraPawn")
 	void SetPlanetActor(APlanetActor *Val) { PlanetActor = Val; };
+
+	UFUNCTION(BlueprintCallable, Category = "PlayerCameraPawn")
+	void SetComponentRelativeRotation(UPrimitiveComponent *Src, UPrimitiveComponent *Dst);
 
 	UPROPERTY(Category = Pawn, VisibleAnywhere, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
 	USphereComponent* CollisionComponent;
@@ -80,10 +90,7 @@ public:
 	UCameraComponent* CameraComponent;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "PlayerCameraPawn")
-	float MoveSpeed;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "PlayerCameraPawn")
-	float MoveSpeedScale = 0.005;
+	float MoveSpeed = 500;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "PlayerCameraPawn")
 	float MinAltitude = 100.0;
@@ -110,4 +117,5 @@ private:
 	FVector TargetPoint;
 
 	FVector LastUpdatePlanetPoint;
+	float LastDeltaTime = 0.0;
 };

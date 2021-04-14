@@ -10,7 +10,7 @@ public class OurHome : ModuleRules
 	
 		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore" });
 
-        PublicDependencyModuleNames.AddRange(new string[] { "ProceduralMeshComponent", "SimplexNoise" });
+        PublicDependencyModuleNames.AddRange(new string[] { "SimplexNoise", "RuntimeMeshComponent", "PlanetPlugin"});
 
         PrivateDependencyModuleNames.AddRange(new string[] {  });
 

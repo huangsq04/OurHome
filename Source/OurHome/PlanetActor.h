@@ -4,11 +4,12 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
-#include "ProceduralMeshComponent.h"
-#include "RegularPentagonTriangleArea.h"
+#include "TriangleArea.h"
 #include "TerrainLoadThread.h"
 #include "Components/HierarchicalInstancedStaticMeshComponent.h"
 #include "FQuatDouble.h"
+#include "Components/RuntimeMeshComponentStatic.h"
+#include "PlanetMeshProvider.h"
 #include "PlanetActor.generated.h"
 
 class APlanetActor;
@@ -116,12 +117,13 @@ protected:
 	virtual void BeginPlay() override;
 
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason);
+
+	void OnConstruction(const FTransform& Transform) override;
 public:	
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
 
-	UFUNCTION(BlueprintCallable)
-	float GetTerrainHeight(const FVector &Point) const;
+	double GetTerrainHeight(const FVectorDouble3D &Point) const;
 
 	UFUNCTION(BlueprintCallable)
 	FHexGridInfo GetTerrainPosition(const FVector &Point);
@@ -139,13 +141,16 @@ public:
 	void AsyncCreateTerrain();
 
 	UFUNCTION(BlueprintCallable)
+	void CheckUpdateTerrain();
+
+	UFUNCTION(BlueprintCallable)
 	FIntVector GetHexXY(const FVector& Point, int Level);
 
 
 	UFUNCTION(BlueprintCallable)
 	bool CmpPointInTriangle(const FVector& A, const FVector& B, const FVector& C, const FVector& P)
 	{
-		return PointInTriangle(A, B, C, P);
+		return UPlanetFunctionLib::PointInTriangle(A, B, C, P);
 	}
 
 	UFUNCTION(BlueprintCallable)
@@ -164,13 +169,18 @@ public:
 	UFUNCTION(BlueprintImplementableEvent, Category = "Planet")
 	void OnCreateHexObject(const FVector &Location, const FRotator &Rotator);
 
-	UFUNCTION(BlueprintCallable)
-	void CreateProceduralMesh();
+	UFUNCTION(BlueprintCallable, Category = "Planet")
+	FVector GetHitPoint(const FVector &Src, const FVector &Dir);
+
+	bool TerrainUpdateCheck();
 
 public:
 
+	UPROPERTY(Category = "Planet", VisibleAnywhere, BlueprintReadOnly, Meta = (ExposeFunctionCategories = "Mesh,Rendering,Physics,Components|RuntimeMesh", AllowPrivateAccess = "true"))
+	class URuntimeMeshComponent* RuntimeMeshComponent;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
-	class UProceduralMeshComponent* PlanetMesh;
+	UPlanetMeshProvider *PlanetProvider;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
 	class UMaterialInterface* MeshMaterialLand;
@@ -203,6 +213,9 @@ public:
 	int MaxDepth = 12; 
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
+	int HexDepth = 12; 
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
 	bool DrawOcean = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
@@ -221,7 +234,33 @@ public:
 	TArray<UHierarchicalInstancedStaticMeshComponent*> FoliageComponents;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
-	float TrianglesScaleBase = 1000.0;
+	bool bTerrainCollisionEnable = false;
+
+	//最小边长是高度的比例
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
+	float EdgeHeightRatio = 0.1;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
+	int DefaultMaxDepth = 15;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
+	float CullingAngleScale = 1.0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
+	bool bGenHeight = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
+	TArray<int32> TerrainTriangles;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
+	TArray<FVector> TerrainNormals;
+
+	double CullingAngle; //基础地形最大夹角
+	double CullingLength;
+
+	void GetSectionMeshForLOD(int32 LODIndex, int32 SectionId, FRuntimeMeshRenderableMeshData& MeshData);
+	
+	mutable FCriticalSection UpdateTerrainSync;
 
 public:
 
@@ -239,10 +278,19 @@ public:
 
 	void UpdateFoliage();
 
+	TArray<FColor> TerrainColors;
+
+	//X:倾斜度
+	//Y:高度
+	TArray<FVector2D> TextureCoordinates;
+
+
+	float UpdatePlanetRatio = 0.1;
+
+	bool bUpdateTerrain = false;
 private:
 
-	void UpdateVerticesPoint(int Index, float PointScale,
-		FQuatDouble &QuatD, FVectorDouble3D &CNormal);
+	void UpdateVerticesPoint(int Index, FQuatDouble &QuatD, FVectorDouble3D &CNormal);
 
 	void UpdateVerticesTangent(int Index);
 
@@ -256,8 +304,6 @@ private:
 		double Size = 1.0, 
 		int Depth = 0);
 
-	void UpdateProceduralMesh();
-
 private:
 
 	TMap<int, float> LevelAngle;
@@ -266,9 +312,8 @@ private:
 
 	TArray<FVectorDouble2D> SphericalCoordinateVertices;
 
-	TArray<int32> TerrainTriangles;
 
-	TMap<uint32, uint32>  VertexHash;
+	TMap<uint64, uint32>  VertexHash;
 
 	TArray<float>  VerticesHeight;
 
@@ -276,29 +321,24 @@ private:
 	//Y:到创建中心点夹角
 	TArray<FVector2D> HexTextureCoordinates;
 
-	//X:倾斜度
-	//Y:高度
-	TArray<FVector2D> TextureCoordinates;
 
 	TArray<FVector> DrawWaterVertices;
 
-	double MaxAngle;
+	static TArray<FTriangleArea> RegularPentagonTriangleAreas;
 
-	double MaxDist;
-
-	static TArray<FRegularPentagonTriangleArea> RegularPentagonTriangleAreas;
-
-	TMap<uint32, FHexGridInfo> HexGrids;
-
-	float RatioSizeScale = 1.0;
+	TMap<uint64, FHexGridInfo> HexGrids;
 
 	TerrainLoadThread *TerrainLoad;
-
-	bool ReqUpdateProceduralMesh = false;
-
-	bool ReqCreateProceduralMesh = false;
 
 	FVectorDouble3D CenterNormal; //中心点法向
 
 	float CreateElevation = 0.0;
+
+	bool bIsNeedTerrainUpdate = false;
+
+	//创建地形实际最大深度
+	int CurrentDepthMax = 0;
+
+	//每层的最大角度
+	TArray<double> DepthMaxAngle;
 };

@@ -10,24 +10,43 @@
 #include "Animation/SkeletalMeshActor.h"
 #pragma optimize("", off)
 
+TArray<FTriangleArea> APlanetActor::RegularPentagonTriangleAreas;
 
-TArray<FRegularPentagonTriangleArea> APlanetActor::RegularPentagonTriangleAreas;
 // Sets default values
 APlanetActor::APlanetActor()
 {
  	// Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
 	PrimaryActorTick.bCanEverTick = true;
-	PlanetMesh = CreateDefaultSubobject<UProceduralMeshComponent>("PlanetMesh");
-	PlanetMesh->Mobility = EComponentMobility::Static;
-	FRegularPentagonTriangleArea::CreateBaseDodecahedron(RegularPentagonTriangleAreas);
+
+	RuntimeMeshComponent = CreateDefaultSubobject<URuntimeMeshComponent>(TEXT("RuntimeMeshComponent"));
+	RootComponent = RuntimeMeshComponent;
+
+	//RuntimeMeshComponent->Mobility = EComponentMobility::Static;
+
+	FTriangleArea::CreateBaseDodecahedron(RegularPentagonTriangleAreas);
 	TerrainLoad = nullptr;
 	LevelAngle = { {9, 0.00148417137}, {10, 0.000742556120}, {11, 0.000371027971}, {12, 0.000185511512}, {13, 9.27560541e-05} };
 }
 
+void APlanetActor::OnConstruction(const FTransform & Transform)
+{
+	Super::OnConstruction(Transform);
+
+	PlanetProvider = NewObject<UPlanetMeshProvider>(this, TEXT("PlanetMeshProvider"));
+	PlanetProvider->SetSphereRadius(SphereRadius);
+
+	RuntimeMeshComponent->Initialize(PlanetProvider);
+
+
+}
 // Called when the game starts or when spawned
 void APlanetActor::BeginPlay()
 {
 	Super::BeginPlay();
+
+	RuntimeMeshComponent->SetMaterial(0, MeshMaterialLand);
+	RuntimeMeshComponent->SetMaterial(1, MeshMaterialOcean);
+	PlanetProvider->SectionMeshForLODDelegate.BindUObject(this, &APlanetActor::GetSectionMeshForLOD);
 
 	for (FPlanetFoliage &Item : PlanetFoliages)
 	{
@@ -65,18 +84,19 @@ void APlanetActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 void APlanetActor::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
-
-	if (ReqCreateProceduralMesh)
+	if (bIsNeedTerrainUpdate)
 	{
-		CreateProceduralMesh();
-		ReqCreateProceduralMesh = false;
+		PlanetProvider->SetTime(DeltaTime);
+		bIsNeedTerrainUpdate = false;
+		bUpdateTerrain = false;
 	}
-
-	if (ReqUpdateProceduralMesh)
+	else
 	{
-		UpdateProceduralMesh();
-
-		ReqUpdateProceduralMesh = false;
+		if (!bUpdateTerrain && TerrainUpdateCheck())
+		{
+			bUpdateTerrain = true;
+			AsyncCreateTerrain();
+		}
 	}
 }
 
@@ -132,24 +152,27 @@ float APlanetActor::GetNoiseTerrainHeight(const FVector2D &Point) const
 	{
 		Height = Height + (PI - Point.X) * 2.0 - 1.0;
 	}
-	return Height;
 
+	if(bGenHeight)
+		return Height;
+	else
+		return 0.0;
 }
-float APlanetActor::GetTerrainHeight(const FVector &Point) const
+double APlanetActor::GetTerrainHeight(const FVectorDouble3D &Point) const
 {
-	FVector2D XY = SphericalFromCartesian(Point).ToVector2D();
+	FVector2D XY = UPlanetFunctionLib::SphericalFromCartesian(Point).ToVector2D();
 	return SphereRadius + GetNoiseTerrainHeight(XY) * NoiseScale.Z;
 }
 float APlanetActor::GetNoiseTerrainHeight(const FVector &Point)
 {
-	FVector2D XY = SphericalFromCartesian(Point).ToVector2D();
+	FVector2D XY = UPlanetFunctionLib::SphericalFromCartesian(Point).ToVector2D();
 	return GetNoiseTerrainHeight(XY);
 }
 int APlanetActor::AddTerrainPoint(const FVectorDouble3D &Point, const FVector2D &UV)
 {
 	uint32 *Index;
-	FVectorDouble2D XY = SphericalFromCartesian(Point);
-	uint32 Hash = GetTypeHash(XY);
+	FVectorDouble2D XY = UPlanetFunctionLib::SphericalFromCartesian(Point);
+	uint64 Hash = UPlanetFunctionLib::GetTypeHash(XY);
 	Index = VertexHash.Find(Hash);
 	if (Index != nullptr)
 	{
@@ -163,27 +186,15 @@ int APlanetActor::AddTerrainPoint(const FVectorDouble3D &Point, const FVector2D 
 		SphericalCoordinateVertices.Add(XY);
 		HexTextureCoordinates.Add(UV);
 
+		FColor Color(UV.X * 255, UV.X * 255, UV.X * 255);
+		TerrainColors.Add(Color);
 		TerrainVertices.Add(Point);
+		FVector P(Point.X, Point.Y, Point.Z);
+		TerrainNormals.Add(P);
 		return  VerticeIndex;
 	}
-
 }
 
-FQuatDouble GetQuatDouble(const FVectorDouble3D &A, const FVectorDouble3D &B, double AngleRad)
-{
-	FVectorDouble3D Axis = A ^B;
-	Axis.Normalize();
-	double Ag = A | B;
-	double Angle = acos(Ag);
-	FQuatDouble QuatA(Axis.ToVector(), 0);
-	FQuatDouble QuatB(Axis.ToVector(), Angle);
-	return FQuatDouble::Slerp(QuatA, QuatB, AngleRad);
-}
-FVectorDouble3D RotatorVector(const FVectorDouble3D &V, const FQuatDouble &Q)
-{
-	FVectorDouble3D R = Q.RotateVector(V);
-	return R;
-}
 
 FVectorDouble3D ScaleVector(const FVectorDouble3D &V, const FVectorDouble3D &A, const FVectorDouble3D &B, double AngleRad)
 {
@@ -193,34 +204,25 @@ FVectorDouble3D ScaleVector(const FVectorDouble3D &V, const FVectorDouble3D &A, 
 	return R;
 }
 
-void APlanetActor::UpdateVerticesPoint(int Index, float PointScale, 
-	FQuatDouble &QuatD, FVectorDouble3D &CNormal)
+void APlanetActor::UpdateVerticesPoint(int Index, FQuatDouble &QuatD, FVectorDouble3D &CNormal)
 {
-	if (PointScale > 1.0)
-	{
-		float S = 1.0f - HexTextureCoordinates[Index].Y / (HexTextureCoordinates[0].Y * 1.02f);
-		S = FMath::Clamp(S, 0.0f, 1.0f);
-		PointScale = (1.0f + S * PointScale) * PointScale;
-	}
-	
-	FVectorDouble3D NDP = QuatD.RotateVector(TerrainVertices[Index]);
+	FVectorDouble3D P = QuatD.RotateVector(TerrainVertices[Index]);
 	if (FMath::IsNaN(QuatD.X))
 	{
-		NDP = TerrainVertices[Index];
+		P = TerrainVertices[Index];
 	}
-	FVectorDouble3D DP = ScaleVector(CNormal, CNormal, NDP, PointScale);
 
-	FVectorDouble2D XY = SphericalFromCartesian(DP);
+	FVectorDouble2D XY = UPlanetFunctionLib::SphericalFromCartesian(P);
 	SphericalCoordinateVertices[Index] = XY;
 
 	float Height = GetNoiseTerrainHeight(XY.ToVector2D());
 	VerticesHeight[Index] = Height;
 
-	DrawTerrainVertices[Index] = (DP * (SphereRadius + Height * NoiseScale.Z)).ToVector();
+	DrawTerrainVertices[Index] = (P * (SphereRadius + Height * NoiseScale.Z)).ToVector();
 
 	if (DrawOcean)
 	{
-		DrawWaterVertices[Index] = (DP * SphereRadius).ToVector();
+		DrawWaterVertices[Index] = (P * SphereRadius).ToVector();
 	}
 	TextureCoordinates[Index] = { 0, Height };
 }
@@ -237,6 +239,11 @@ void APlanetActor::UpdateVerticesTangent(int Index)
 	B.Normalize();
 
 	float Angle = acos(FVector::DotProduct(B, C));
+
+	if (FMath::IsNaN(Angle) || !FMath::IsFinite(Angle))
+	{
+		Angle = 0.0;
+	}
 	TextureCoordinates[TerrainTriangles[Index * 3]].X = (TextureCoordinates[TerrainTriangles[Index * 3]].X + Angle) / 2.0;
 	TextureCoordinates[TerrainTriangles[Index * 3 + 1]].X = (TextureCoordinates[TerrainTriangles[Index * 3 + 1]].X + Angle) / 2.0;
 	TextureCoordinates[TerrainTriangles[Index * 3 + 2]].X = (TextureCoordinates[TerrainTriangles[Index * 3 + 2]].X + Angle) / 2.0;
@@ -250,35 +257,18 @@ void APlanetActor::UpdateTerrain()
 	}
 
 	FVectorDouble3D CNormal = GetPlayerHexCenterNormal();
+
 	if (CNormal.X == 0 && CNormal.Y == 0 && CNormal.Z == 0)
 	{
 		return;
 	}
 
-	UWorld* World = GetWorld();
-	APawn *Pawn = GEngine->GetFirstLocalPlayerController(World)->GetPawn();
-	float Elevation = Pawn->GetActorLocation().Size();
-
-	float PointScale = Elevation - (SphereRadius + TrianglesScaleBase);
-	if (PointScale < 0)
-	{
-		PointScale = 1;
-	}
-	else if (PointScale > (SphereRadius + TrianglesScaleBase))
-	{
-		PointScale = MaxDepth;
-	}
-	else
-	{
-		PointScale = 1 + (MaxDepth / (SphereRadius + TrianglesScaleBase)) * PointScale;
-	}
-
-	FQuatDouble QuatD = GetQuatDouble(CenterNormal, CNormal, 1.0);
+	FQuatDouble QuatD = UPlanetFunctionLib::GetQuatDouble(CenterNormal, CNormal, 1.0);
 
 	ParallelFor(TerrainVertices.Num(),
 		[&](int32 Index)
 	{
-		UpdateVerticesPoint(Index, PointScale, QuatD, CNormal);
+		UpdateVerticesPoint(Index, QuatD, CNormal);
 	});
 
 	//计算斜率
@@ -289,9 +279,9 @@ void APlanetActor::UpdateTerrain()
 	});
 
 	//更新地面植被
-	UpdateFoliage();
+	//UpdateFoliage();
 
-	ReqUpdateProceduralMesh = true;
+	bIsNeedTerrainUpdate = true;
 }
 
 void APlanetActor::AsyncUpdateTerrain()
@@ -311,79 +301,12 @@ void APlanetActor::AsyncCreateTerrain()
 
 	if (!TerrainLoad->TerrainLoadFun.IsBound())
 	{
-		//TerrainLoad->TerrainLoadFun.BindUObject(this, &APlanetActor::UpdateTerrain);
 		TerrainLoad->TerrainLoadFun.BindUObject(this, &APlanetActor::CreateTerrain);
 	}
 }
-void APlanetActor::UpdateProceduralMesh()
-{
-	TArray<FVector> Normals;
-	TArray<FVector2D> UV2;
-	TArray<FVector2D> UV3;
-	TArray<FColor> VertexColors;
-	TArray<FProcMeshTangent> Tangents;
-
-	PlanetMesh->UpdateMeshSection(0, DrawTerrainVertices, Normals, TextureCoordinates,
-		HexTextureCoordinates, UV2, UV3, VertexColors, Tangents);
-
-	if (DrawOcean)
-	{
-		PlanetMesh->UpdateMeshSection(1, DrawWaterVertices, Normals, TextureCoordinates,
-			HexTextureCoordinates, UV2, UV3, VertexColors, Tangents);
-	}
-
-	for (auto &Item : HexGrids)
-	{
-		if (Item.Value.Level > MaxDepth - 6)
-		{
-			for (int Index = 0 ;Index < Item.Value.FoliageDatas.Num(); Index++)
-			{
-				for (auto &Value :Item.Value.FoliageDatas[Index])
-				{
-					//int Idx = PlanetFoliages[Index].Foliage()->AddInstance(Value);
-					//Item.Value.FoliageInstanceIndex[Index].Add(Idx);
-				}
-			}
-		}
-	}
-}
-void APlanetActor::CreateProceduralMesh()
-{
-	TArray<FVector> Normals;
-	TArray<FVector2D> UV2;
-	TArray<FVector2D> UV3;
-	TArray<FColor> VertexColors;
-	TArray<FProcMeshTangent> Tangents;
-
-	PlanetMesh->ClearMeshSection(0);
-
-	if (DrawOcean)
-	{
-		PlanetMesh->ClearMeshSection(1);
-	}
-
-	PlanetMesh->CreateMeshSection(0, DrawTerrainVertices, TerrainTriangles, Normals, TextureCoordinates,
-		HexTextureCoordinates, UV2, UV3, VertexColors, Tangents, false);
-
-	if (PlanetMesh->GetMaterial(0) == nullptr)
-	{
-		PlanetMesh->SetMaterial(0, MeshMaterialLand);
-	}
-
-	if (DrawOcean)
-	{
-		PlanetMesh->CreateMeshSection(1, DrawTerrainVertices, TerrainTriangles, Normals, TextureCoordinates,
-			HexTextureCoordinates, UV2, UV3, VertexColors, Tangents, false);
-
-		if (PlanetMesh->GetMaterial(0) == nullptr)
-		{
-			PlanetMesh->SetMaterial(1, MeshMaterialOcean);
-		}
-	}
-}
-
 void APlanetActor::CreateTerrain()
 {
+	FScopeLock Lock(&UpdateTerrainSync);
 	VertexHash.Empty();
 	TerrainVertices.Empty();
 	TerrainTriangles.Empty();
@@ -391,7 +314,11 @@ void APlanetActor::CreateTerrain()
 	SphericalCoordinateVertices.Empty();
 	TextureCoordinates.Empty();
 	DrawTerrainVertices.Empty();
+	TerrainColors.Empty();
 	HexGrids.Empty();
+	DepthMaxAngle.Empty();
+	CurrentDepthMax = 0;
+	TerrainNormals.Empty();
 
 	UWorld* World = GetWorld();
 	APawn *Pawn = GEngine->GetFirstLocalPlayerController(World)->GetPawn();
@@ -405,21 +332,40 @@ void APlanetActor::CreateTerrain()
 
 	CreateElevation = Pawn->GetActorLocation().Size();
 
+	if (CreateElevation > SphereRadius * 1.1)
+	{
+		CreateElevation = SphereRadius * 1.1;
+	}
+
+	//计算最大深度
+	double EdLeng = RegularPentagonTriangleAreas[0].LenPos0Pos1 * SphereRadius;
+	for (int i = 0; i < DefaultMaxDepth; i++)
+	{
+		DepthMaxAngle.Add(RegularPentagonTriangleAreas[0].LenPos0Pos1 / pow(2.0, i));
+		if (EdLeng / pow(2.0, i) < (CreateElevation - SphereRadius )* EdgeHeightRatio)
+		{
+			MaxDepth = FMath::Clamp(i - 2, 2, DefaultMaxDepth);
+			break;
+		}
+	}
+
+	CullingAngleScale = (DefaultMaxDepth - MaxDepth + DefaultMaxDepth / 2.0) / (double)DefaultMaxDepth;
+	CullingAngleScale = FMath::Clamp(CullingAngleScale, 0.5f, 1.0f);
+	UpdatePlanetRatio = FMath::Clamp(1.0 - CullingAngleScale, 0.1, 0.5);
+
+
+	CullingAngle = acos((double)SphereRadius / CreateElevation) * CullingAngleScale;
+	CullingLength = sin(CullingAngle) * 2.0 ;
+
 	FVectorDouble3D Pos = CenterNormal * CreateElevation;
 
 	FVectorDouble3D Center = (Pos - this->GetActorLocation()) / SphereRadius;
-
-	RatioSizeScale = Center.Size();
-	RatioSizeScale = FMath::Clamp(RatioSizeScale, (float)1.0, (float)3.0);
-	MaxDist = 1.0 / Center.Size();
-	MaxAngle = acos(MaxDist);
-	MaxDist = FMath::Tan(MaxAngle) * 4.5;
 
 	for (auto &Item : RegularPentagonTriangleAreas)
 	{
 		CreateVerticesRecursive(
 			{Item.GetPos0(), Item.GetCenterPos(), Item.GetPos1()}, 
-			{ {1, 0}, {0, 0}, {0, 1}},	Center, Item.GetIndex());
+			{ {1, 0}, {0, 0}, {0, 1}}, CenterNormal, Item.GetIndex());
 	}
 
 	TextureCoordinates.SetNum(SphericalCoordinateVertices.Num());
@@ -455,7 +401,7 @@ void APlanetActor::CreateTerrain()
 
 	UpdateTerrain();
 
-	ReqCreateProceduralMesh = true;
+	bIsNeedTerrainUpdate = true;
 }
 
 void APlanetActor::CreateVerticesRecursive(
@@ -478,7 +424,7 @@ void APlanetActor::CreateVerticesRecursive(
 	EdgeCenter[2].Normalize();
 
 	bool EdgeTest[3];
-	double LoRatioSize = Size * RatioSize * RatioSizeScale;
+	double LoRatioSize = Size * RatioSize;
 
 	for (int i = 0; i < 3; i++)
 	{
@@ -494,22 +440,32 @@ void APlanetActor::CreateVerticesRecursive(
 		}
 	}
 
-	double CP1P2 = PointToSegDist(P1, P2, Center);
-	double CP2P3 = PointToSegDist(P2, P3, Center);
-	double CP3P1 = PointToSegDist(P3, P1, Center);
-	double MinDist = FMath::Min(CP1P2, FMath::Min(CP2P3, CP3P1));
-	const FVector VP1(P1.X, P1.Y, P1.Z) ;
-	const FVector VP2(P2.X, P2.Y, P2.Z) ;
-	const FVector VP3(P3.X, P3.Y, P3.Z) ;
-	const FVector VCenter(Center.X, Center.Y, Center.Z);
-	if (!FGeomTools::PointInTriangle(VP1, VP2, VP3, VCenter) && MaxDist < MinDist)
+	FVectorDouble3D Pc = (P1 + P2 + P3) / 3.0;
+
+	bool Culling = false;
+	double L1 = (P1 - Pc).Size();
+	double L2 = (Center - Pc).Size();
+
+	if (L2 > (L1 + CullingLength))
 	{
 		return;//culling
 	}
 
-	if ((EdgeTest[0] && EdgeTest[1] && EdgeTest[2]) || Depth > MaxDepth)
+	if ((EdgeTest[0] && EdgeTest[1] && EdgeTest[2]) || Depth > MaxDepth || Depth == HexDepth)
 	{
-		const TArray<FVector2D> UVPs = { {1,1}, {0,0}, {1,1} };
+		if (CurrentDepthMax < Depth)
+		{
+			CurrentDepthMax = Depth;
+		}
+		TArray<FVector2D> UVPs = { {1,0}, {0,0}, {1,0} };
+		if (CurrentDepthMax != HexDepth)
+		{
+			UVPs = { {0,0}, {0,0}, {0,0} };
+		}
+		else
+		{
+			UVPs = { {1,0}, {0,0}, {1,0} };
+		}
 		TArray<FVectorDouble3D> PitchVertices;
 		TArray<FVector2D> PitchVerticesUV;
 		TArray<int32>   PitchTriangles;
@@ -549,8 +505,8 @@ void APlanetActor::CreateVerticesRecursive(
 				}
 			}
 		}
-		uint32 hash = 0;
-		hash = GetTypeHash(P2);
+		uint64 hash = 0;
+		hash = UPlanetFunctionLib::GetTypeHash(P2);
 		int TriIdx = AddTerrainPoint(P2, UVPs[1]);
 		if (!HexGrids.Contains(hash))
 		{
@@ -576,11 +532,11 @@ void APlanetActor::CreateVerticesRecursive(
 			GridInfo.HexLocations.Add(Location);
 
 			int TriIdx1 = AddTerrainPoint(P1, UVPs[0]);
-			uint32 hash1 = GetTypeHash(P1);
+			uint64 hash1 = UPlanetFunctionLib::GetTypeHash(P1);
 			GridInfo.AddSide(hash1, TriIdx1);
 
 			int TriIdx3 = AddTerrainPoint(P3, UVPs[2]);
-			uint32 hash3 = GetTypeHash(P3);
+			uint64 hash3 = UPlanetFunctionLib::GetTypeHash(P3);
 			GridInfo.AddSide(hash3, TriIdx3);
 		}
 
@@ -637,7 +593,7 @@ FVectorDouble3D APlanetActor::Vector3dFromHexXY(const FIntVector &Point, int Lev
 }
 FIntVector APlanetActor::GetHexXY(const FVector& Point, int Level)
 {
-	for (FRegularPentagonTriangleArea &Item : RegularPentagonTriangleAreas)
+	for (FTriangleArea &Item : RegularPentagonTriangleAreas)
 	{
 		FIntVector Ret = Item.GetHexXY(Point, Level);
 
@@ -662,13 +618,13 @@ FHexGridInfo APlanetActor::GetTerrainPosition(const FVector &Point)
 
 	FVectorDouble3D Pos = Vector3dFromHexXY(Location, MaxDepth + 1);
 
-	uint32 hash = GetTypeHash(Pos);
+	uint64 hash = UPlanetFunctionLib::GetTypeHash(Pos);
 	FHexGridInfo *HexGridInfo = HexGrids.Find(hash);
 	if (HexGridInfo != nullptr)
 	{
 		if (HexGridInfo->SphericalCoordinate.X == 0.0 &&  HexGridInfo->SphericalCoordinate.Y == 0.0)
 		{
-			HexGridInfo->SphericalCoordinate = SphericalFromCartesian(HexGridInfo->Point);
+			HexGridInfo->SphericalCoordinate = UPlanetFunctionLib::SphericalFromCartesian(HexGridInfo->Point);
 			HexGridInfo->TerrainHeight = VerticesHeight[HexGridInfo->VerticeIndex];
 		}
 		return *HexGridInfo;
@@ -692,7 +648,7 @@ void APlanetActor::SetActorGroundPointAndRotator(const AActor *Actor, const FVec
 	FVector Pl = Point;
 	AActor *A = (AActor *)Actor;
 
-	FIntVector Location = GetHexXY(Pl, MaxDepth + 1);
+	FIntVector Location = GetHexXY(Pl, HexDepth);
 	if (Location.X == -1)
 	{
 		return;
@@ -708,7 +664,6 @@ void APlanetActor::SetActorGroundPointAndRotator(const AActor *Actor, const FVec
 			{
 				FVector Pi = GEngine->GetFirstLocalPlayerController(GetWorld())->GetPawn()->GetActorLocation();
 				Rotator = FRotationMatrix::MakeFromXZ(FVector::CrossProduct(Pi, P), P).Rotator();
-
 			}
 			else
 			{
@@ -743,7 +698,7 @@ TArray<FHexGridInfo> APlanetActor::TempShowRangePosA(const FIntVector &Pos, floa
 	TArray<FHexGridInfo> R;
 	FVectorDouble3D P = Vector3dFromHexXY(Pos, MaxDepth + 1);
 
-	uint32 hash = GetTypeHash(P);
+	uint64 hash = UPlanetFunctionLib::GetTypeHash(P);
 	FHexGridInfo *HexGridInfo = HexGrids.Find(hash);
 	
 	for (auto &Item :HexGrids)
@@ -784,7 +739,7 @@ TArray<FVector>  APlanetActor::GetHexRandomPoint(const FHexGridInfo& Hex, int De
 
 	if (Hex.Level != 13) return R;
 
-	FVector2D Noise2D = SphericalFromCartesian(Hex.Point).ToVector2D()* NoiseArgs[DensityIndex].X;
+	FVector2D Noise2D = UPlanetFunctionLib::SphericalFromCartesian(Hex.Point).ToVector2D()* NoiseArgs[DensityIndex].X;
 	float H = USimplexNoiseBPLibrary::SimplexNoise2D(Noise2D.X, Noise2D.Y);
 	if (H < 0) return R;
 
@@ -804,14 +759,14 @@ TArray<FVector>  APlanetActor::GetHexRandomPoint(const FHexGridInfo& Hex, int De
 		float X = (P[3 * i + 1] - 48) * 0.1;
 		float Y = (P[3 * i + 2] - 48) * 0.1;
 
-		FQuatDouble QuatD = GetQuatDouble(FVectorDouble3D(0, 0, 1), TerrainVertices[Hex.VerticeIndex], 1.0);
+		FQuatDouble QuatD = UPlanetFunctionLib::GetQuatDouble(FVectorDouble3D(0, 0, 1), TerrainVertices[Hex.VerticeIndex], 1.0);
 		if (X == 0.0) X = 0.5;
 		X = X * LevelAngle[Hex.Level];
 		Y = 2.0 * Y * PI;
-		FVectorDouble3D HP = SphericalToCartesian(FVectorDouble2D(X, Y));
+		FVectorDouble3D HP = UPlanetFunctionLib::SphericalToCartesian(FVectorDouble2D(X, Y));
 		HP.Normalize();
 		FVectorDouble3D NDP = QuatD.RotateVector(HP);
-		float Height = GetTerrainHeight(NDP.ToVector());
+		float Height = GetTerrainHeight(NDP);
 		R.Add(NDP.ToVector() * Height);
 	}
 	return R;
@@ -821,12 +776,14 @@ FVectorDouble3D APlanetActor::GetPlayerHexCenterNormal()
 {
 	UWorld* World = GetWorld();
 	APawn *Pawn = GEngine->GetFirstLocalPlayerController(World)->GetPawn();
-	FIntVector Location = GetHexXY(Pawn->GetActorLocation(), MaxDepth + 1);
+	FIntVector Location = GetHexXY(Pawn->GetActorLocation(), HexDepth);
 	if (Location.X == -1)
 	{
 		return { 0,0,0 };
 	}
-	return Vector3dFromHexXY(Location, MaxDepth + 1);
+	FVectorDouble3D Ret = Vector3dFromHexXY(Location, HexDepth);
+	Ret.Normalize();
+	return Ret;
 }
 void APlanetActor::UpdateFoliage()
 {
@@ -870,6 +827,122 @@ void APlanetActor::UpdateFoliage()
 				}
 			}
 		}
+	}
+}
+
+bool APlanetActor::TerrainUpdateCheck()
+{
+	UWorld* World = GetWorld();
+	APawn *Pawn = GEngine->GetFirstLocalPlayerController(World)->GetPawn();
+
+	FVectorDouble3D Pl = Pawn->GetActorLocation();
+	//高度更新检查
+	double Angle = acos((double)SphereRadius / Pl.Size()) *  CullingAngleScale; 
+	if (abs(CullingAngle - Angle) > CullingAngle * UpdatePlanetRatio)
+	{
+		return true;
+	}
+
+	//创建中心点夹角检查
+	Pl.Normalize();
+	double PlAg = acos(CenterNormal | Pl);
+	if (PlAg > DepthMaxAngle[(CurrentDepthMax + 1) / 2] * UpdatePlanetRatio)
+	{
+		return true;
+	}
+
+	return false;
+}
+void APlanetActor::CheckUpdateTerrain()
+{
+	if (!bUpdateTerrain && TerrainUpdateCheck())
+	{
+		bUpdateTerrain = true;
+		AsyncCreateTerrain();
+	}
+}
+
+FVector APlanetActor::GetHitPoint(const FVector &Src, const FVector &Dir)
+{
+	FVectorDouble3D S = -Src;
+	S.Normalize();
+	FVectorDouble3D D = Dir;
+	D.Normalize();
+	double a = acos(S| D);
+	if (a > 1.5)
+	{
+		//return { 0,0,0 };
+	}
+
+	double l = cos(a) * Src.Size();
+	FVectorDouble3D C = Src + Dir * l;
+	double Cl = C.Size();
+	if (Cl > SphereRadius * 0.9999)
+	{
+		//return { 0,0,0 };
+	}
+
+	double A = sqrt((double)SphereRadius * (double)SphereRadius  - Cl * Cl);
+
+	FVectorDouble3D V =  C - Dir * A;
+	V.Normalize();
+
+	int T1 = 10000;
+	FVectorDouble3D LastPos;
+	for (int i = 0; i < T1; i++)
+	{
+		FVectorDouble3D P1 = Src + Dir * l * (1.0/T1) * i;
+		double PH = P1.Size();
+		P1.Normalize();
+		LastPos = P1;
+		double TH = GetTerrainHeight(P1);
+
+		if (PH - TH < 0.0)
+		{
+			V = LastPos;
+			break;
+		}
+	}
+
+	FIntVector Location = GetHexXY(V.ToVector(), HexDepth);
+	if (Location.X == -1)
+	{
+		return { 0,0,0 };
+	}
+
+	V = Vector3dFromHexXY(Location, HexDepth);
+	V.Normalize();
+
+	V = V * GetTerrainHeight(V);
+	return V.ToVector();
+}
+void APlanetActor::GetSectionMeshForLOD(int32 LODIndex, int32 SectionId, FRuntimeMeshRenderableMeshData& MeshData)
+{
+	FScopeLock Lock(&UpdateTerrainSync);
+
+	FVector Tangent(1, 0, 1);
+	Tangent.Normalize();
+
+	for (int32 Idx : TerrainTriangles)
+	{
+		MeshData.Triangles.Add(Idx);
+	}
+
+	for (int i = 0; i < DrawTerrainVertices.Num(); i++)
+	{
+		MeshData.TexCoords.Add(TextureCoordinates[i]);
+
+		if (SectionId == 0)
+		{
+			MeshData.Positions.Add(DrawTerrainVertices[i]);
+		}
+		else
+		{
+			MeshData.Positions.Add(TerrainNormals[i] * SphereRadius);
+		}
+
+		MeshData.Colors.Add(TerrainColors[i]);
+		MeshData.Tangents.Add(TerrainNormals[i], Tangent);
 	}
 }
 #pragma optimize("", on)

@@ -2,7 +2,7 @@
 
 
 #include "PlanetDatasLibrary.h"
-#include "RegularPentagonTriangleArea.h"
+#include "PlanetFunctionLib.h"
 
 TArray<int> UPlanetDatasLibrary::GetHexObject(FIntVector Vector)
 {
@@ -15,5 +15,6 @@ TArray<int> UPlanetDatasLibrary::GetHexObject(FIntVector Vector)
 }
 float UPlanetDatasLibrary::TempPointToSegDist(const FVector &A, const FVector &B, const FVector &P) //Temp
 {
-	return PointToSegDist(A, B, P);
+	return 0;
+	//return UPlanetFunctionLib::PointToSegDist(A, B, P);
 }
