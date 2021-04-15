@@ -164,8 +164,5 @@ float APlanetPawn::GetPlayerMoveSpeed()
 void APlanetPawn::SetComponentRelativeRotation(UPrimitiveComponent *Src, UPrimitiveComponent *Dst)
 {
 	Dst->SetRelativeRotation_Direct(ArrowComponent->GetRelativeRotation());
-	float Size = GetPlayerHeight() / 1000;
-	FVector Location(-Size, 0, 0);
-	Dst->SetRelativeLocation_Direct(Location);
 }
 #pragma optimize("", on)

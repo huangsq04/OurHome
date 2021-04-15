@@ -50,17 +50,18 @@ public:
 	UFUNCTION(BlueprintCallable)
 	void SetTime(float InTime);
 
-	//UPROPERTY()
-	//APlanetActor *Planet;
-
 	FGetSectionMeshForLODDelegate SectionMeshForLODDelegate;
 
 protected:
 
 	virtual void Initialize() override;
+
 	virtual bool GetSectionMeshForLOD(int32 LODIndex, int32 SectionId, FRuntimeMeshRenderableMeshData& MeshData) override;
+
 	virtual FRuntimeMeshCollisionSettings GetCollisionSettings() override;
+
 	FBoxSphereBounds GetBounds() override;
+
 	bool IsThreadSafe() override;
 	
 };

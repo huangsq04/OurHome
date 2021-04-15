@@ -38,6 +38,7 @@ public class PlanetPlugin : ModuleRules
 				"Engine",
 				"Slate",
 				"SlateCore",
+                "SimplexNoise",
                 "RuntimeMeshComponent",
 				// ... add private dependencies that you statically link with here ...	
 			}
