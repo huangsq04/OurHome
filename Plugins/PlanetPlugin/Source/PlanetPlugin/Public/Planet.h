@@ -60,9 +60,17 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Planet")
 	void SetActorGroundPointAndRotator(const AActor *Actor, const FVector &Point, bool FacePlayer);
 
-	//计算射线和球的交点
+	//计算射线点击的地面点
 	UFUNCTION(BlueprintCallable, Category = "Planet")
 	FVector GetHitPoint(const FVector &Src, const FVector &Dir);
+
+	//计算射线点击的6边形中心点周边的6个6边形
+	UFUNCTION(BlueprintCallable, Category = "Planet")
+	TArray<FVector> GetHitAroundHex(const FVector &Src, const FVector &Dir);
+
+	//计算射线点击的6边形6个顶点
+	UFUNCTION(BlueprintCallable, Category = "Planet")
+	TArray<FVector> GetHitHexPoint(const FVector &Src, const FVector &Dir);
 
 	void GetSectionMeshForLOD(int32 LODIndex, int32 SectionId, FRuntimeMeshRenderableMeshData& MeshData);
 
@@ -157,6 +165,7 @@ private:
 
 private:
 
+	//R表示6边形纹理坐标
 	TArray<FColor> TerrainColors;
 
 	//X:倾斜度
@@ -171,19 +180,11 @@ private:
 
 	TArray<FVectorDouble3D> TerrainVertices;
 
-	TArray<FVectorDouble2D> SphericalCoordinateVertices;
-
 	TArray<int32> TerrainTriangles;
 
 	TArray<FVector> TerrainNormals;
 
 	TMap<uint64, uint32>  VertexHash;
-
-	TArray<float>  VerticesHeight;
-
-	//X:单个6边形坐标
-	//Y:到创建中心点夹角
-	TArray<FVector2D> HexTextureCoordinates;
 
 	static TArray<FTriangleArea> RegularPentagonTriangleAreas;
 

@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Pawn.h"
+#include "Planet.h"
 #include "PlanetPawn.generated.h"
 
 class USphereComponent;
@@ -32,35 +33,38 @@ public:
 
 	void ModifyLocation(const FVector &Pos, bool IsModifyHeight = true);
 
-	UFUNCTION(BlueprintCallable, Category = "PlayerCameraPawn")
+	UFUNCTION(BlueprintCallable, Category = "PlanetPawn")
 	virtual void MoveForward(float Val);
 
-	UFUNCTION(BlueprintCallable, Category = "PlayerCameraPawn")
+	UFUNCTION(BlueprintCallable, Category = "PlanetPawn")
 	virtual void MoveRight(float Val);
 
-	UFUNCTION(BlueprintCallable, Category = "PlayerCameraPawn")
+	UFUNCTION(BlueprintCallable, Category = "PlanetPawn")
 	virtual void MoveUp(float Val);
 
-	UFUNCTION(BlueprintCallable, Category = "PlayerCameraPawn")
+	UFUNCTION(BlueprintCallable, Category = "PlanetPawn")
 	virtual void Turn(float Val);
 
-	UFUNCTION(BlueprintCallable, Category = "PlayerCameraPawn")
+	UFUNCTION(BlueprintCallable, Category = "PlanetPawn")
 	virtual void LookUp(float Val);
 
-	UFUNCTION(BlueprintCallable, Category = "PlayerCameraPawn")
+	UFUNCTION(BlueprintCallable, Category = "PlanetPawn")
 	void MovePoint(const FVector &Val);
 
-	UFUNCTION(BlueprintCallable, Category = "PlayerCameraPawn")
+	UFUNCTION(BlueprintCallable, Category = "PlanetPawn")
 	void SetUsingAbsoluteRotation(USceneComponent *SceneComponent, bool bInAbsoluteRotation);
 
-	//UFUNCTION(BlueprintCallable, Category = "PlayerCameraPawn")
-	//void ChangePlanetMovemount(APlanetActor *Planet);
+	UFUNCTION(BlueprintCallable, Category = "PlanetPawn")
+	void ChangePlanet(APlanet *V) { Planet = V; };
 
-	UFUNCTION(BlueprintCallable, Category = "PlayerCameraPawn")
+	UFUNCTION(BlueprintCallable, Category = "PlanetPawn")
 	float GetPlayerHeight();
 
-	UFUNCTION(BlueprintCallable, Category = "PlayerCameraPawn")
+	UFUNCTION(BlueprintCallable, Category = "PlanetPawn")
 	float GetPlayerMoveSpeed();
+
+	UFUNCTION(BlueprintCallable, Category = "PlanetPawn")
+	void SetComponentRelativeRotation(UPrimitiveComponent *Src, UPrimitiveComponent *Dst);
 
 private:
 	void AddMoveSpeed();
@@ -68,9 +72,6 @@ private:
 	void SubMoveSpeed();
 
 public:
-
-	UFUNCTION(BlueprintCallable, Category = "PlayerCameraPawn")
-	void SetComponentRelativeRotation(UPrimitiveComponent *Src, UPrimitiveComponent *Dst);
 
 	UPROPERTY(Category = Pawn, VisibleAnywhere, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
 	USphereComponent* CollisionComponent;
@@ -84,11 +85,14 @@ public:
 	UPROPERTY(Category = Pawn, VisibleAnywhere, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
 	UCameraComponent* CameraComponent;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "PlayerCameraPawn")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PlanetPawn")
 	float MoveSpeed = 100;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PlayerCameraPawn")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PlanetPawn")
 	float SphereRadius = 600000;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PlanetPawn")
+	APlanet *Planet;
 
 private:
 

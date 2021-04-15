@@ -24,7 +24,19 @@ public:
 
 	FVectorDouble3D LocalXYToWorldPosition(const FIntPoint &Point, int Level, bool UseRadius = false);
 	FIntPoint GetCenter(const FVectorDouble3D &InPoint, const TArray<FIntPoint> &Idx, int Level, int MaxLevel);
+
+	//获取点对应的6边形坐标
 	FIntVector GetHexXY(const FVectorDouble3D& Point, int Level);
+
+	//获取周边的6个6边形中心坐标
+	TArray<FIntVector> GetHexRound(const FIntVector& Point);
+
+	//获取周边的一定范围的6边形中心坐标
+	TArray<FIntVector> GetHexRoundRange(const FIntVector& Point,uint8 Range = 1);
+
+	//获取周边的6个顶点坐标
+	TArray<FIntVector> GetHexPoint(const FIntVector& Point);
+
 	FIntVector PointInTile(const FVectorDouble3D& Point, int Level);
 
 	bool HasSide(const FVectorDouble3D& P0, const FVectorDouble3D& P1)

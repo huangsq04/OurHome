@@ -342,3 +342,41 @@ FVectorDouble3D FTriangleArea::PointFromLineSegment(const FVectorDouble3D &P1,
 		return PointFromLineSegment(C0, P2, P - Level / 2, Level / 2);
 	}
 }
+
+/*
+    -2,+1    -1,+2
+-1,-1     0,0    +1,+1
+    +1,-2    +2,-1
+*/
+TArray<FIntVector> FTriangleArea::GetHexRound(const FIntVector& Point)
+{
+	return { 
+		FIntVector(-1, -1, 0) + Point,
+		FIntVector(-2, 1, 0) + Point,
+		FIntVector(-1, 2, 0) + Point,
+		FIntVector(1, 1, 0) + Point,
+		FIntVector(2, -1, 0) + Point,
+		FIntVector(1, -2, 0) + Point
+	};
+}
+/*
+    -1,+1    0,+1
+-1,0     0,0    +1,0
+    0,-1    +1,-1
+*/
+TArray<FIntVector> FTriangleArea::GetHexPoint(const FIntVector& Point)
+{
+	return { 
+		FIntVector(-1, 0, 0) + Point,
+		FIntVector(-1, 1, 0) + Point,
+		FIntVector(0, 1, 0) + Point,
+		FIntVector(1, 0, 0) + Point,
+		FIntVector(1, -1, 0) + Point,
+		FIntVector(0, -1, 0) + Point
+	};
+}
+TArray<FIntVector> FTriangleArea::GetHexRoundRange(const FIntVector& Point, uint8 Range)
+{
+	TArray<FIntVector> Ret;
+	return Ret;
+}

@@ -50,6 +50,8 @@ void APlanet::BeginPlay()
 	{
 		TerrainLoad = new FTerrainUpdateThread();
 	}
+
+	AsyncCreateTerrain();
 }
 void APlanet::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
@@ -59,6 +61,7 @@ void APlanet::EndPlay(const EEndPlayReason::Type EndPlayReason)
 void APlanet::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+
 	if (bIsNeedTerrainUpdate)
 	{
 		PlanetProvider->SetTime(DeltaTime);
@@ -151,13 +154,10 @@ int APlanet::AddTerrainPoint(const FVectorDouble3D &Point, const FVector2D &UV)
 	}
 	else
 	{
-		int VerticeIndex = SphericalCoordinateVertices.Num();
+		int VerticeIndex = TerrainVertices.Num();
 		VertexHash.Add(Hash, VerticeIndex);
 
-		SphericalCoordinateVertices.Add(XY);
-		HexTextureCoordinates.Add(UV);
-
-		FColor Color(UV.X * 255, UV.X * 255, UV.X * 255);
+		FColor Color(UV.X * 255, 0, 0, 0);
 		TerrainColors.Add(Color);
 		TerrainVertices.Add(Point);
 		FVector P(Point.X, Point.Y, Point.Z);
@@ -184,10 +184,8 @@ void APlanet::UpdateVerticesPoint(int Index, FQuatDouble &QuatD, FVectorDouble3D
 	}
 
 	FVectorDouble2D XY = UPlanetFunctionLib::SphericalFromCartesian(P);
-	SphericalCoordinateVertices[Index] = XY;
 
 	float Height = GetNoiseTerrainHeight(XY.ToVector2D());
-	VerticesHeight[Index] = Height;
 
 	DrawTerrainVertices[Index] = (P * (SphereRadius + Height * NoiseScale.Z)).ToVector();
 
@@ -218,10 +216,6 @@ void APlanet::UpdateVerticesTangent(int Index)
 
 void APlanet::UpdateTerrain()
 {
-	if (SphericalCoordinateVertices.Num() == 0)
-	{
-		return;
-	}
 
 	FVectorDouble3D CNormal = GetPlayerHexCenterNormal();
 
@@ -271,11 +265,10 @@ void APlanet::AsyncCreateTerrain()
 void APlanet::CreateTerrain()
 {
 	FScopeLock Lock(&UpdateTerrainSync);
+
 	VertexHash.Empty();
 	TerrainVertices.Empty();
 	TerrainTriangles.Empty();
-	HexTextureCoordinates.Empty();
-	SphericalCoordinateVertices.Empty();
 	TextureCoordinates.Empty();
 	DrawTerrainVertices.Empty();
 	TerrainColors.Empty();
@@ -316,7 +309,6 @@ void APlanet::CreateTerrain()
 	CullingAngleScale = FMath::Clamp(CullingAngleScale, 0.5f, 1.0f);
 	UpdatePlanetRatio = FMath::Clamp(1.0 - CullingAngleScale, 0.1, 0.5);
 
-
 	CullingAngle = acos((double)SphereRadius / CreateElevation) * CullingAngleScale;
 	CullingLength = sin(CullingAngle) * 2.0 ;
 
@@ -331,15 +323,8 @@ void APlanet::CreateTerrain()
 			{ {1, 0}, {0, 0}, {0, 1}}, CenterNormal, Item.GetIndex());
 	}
 
-	TextureCoordinates.SetNum(SphericalCoordinateVertices.Num());
-	VerticesHeight.SetNum(SphericalCoordinateVertices.Num());
+	TextureCoordinates.SetNum(TerrainVertices.Num());
 	DrawTerrainVertices.SetNum(TerrainVertices.Num());
-
-	ParallelFor(TerrainVertices.Num(),
-		[&](int32 Index)
-	{
-		HexTextureCoordinates[Index].Y = acos(TerrainVertices[Index] | CenterNormal);
-	});
 
 	struct FCompareAngle
 	{
@@ -357,18 +342,10 @@ void APlanet::CreateTerrain()
 	};
 
 	UpdateTerrain();
-
-	bIsNeedTerrainUpdate = true;
 }
 
-void APlanet::CreateVerticesRecursive(
-	const TArray<FVectorDouble3D> &Points,
-	const TArray<FIntPoint> &HexPoints,
-	const FVectorDouble3D &Center,
-	int AreaIndex,
-	double Size,
-	int Depth
-)
+void APlanet::CreateVerticesRecursive(const TArray<FVectorDouble3D> &Points, const TArray<FIntPoint> &HexPoints,
+	const FVectorDouble3D &Center,	int AreaIndex,	double Size,int Depth)
 {
 	const FVectorDouble3D &P1 = Points[0];
 	const FVectorDouble3D &P2 = Points[1];
@@ -443,8 +420,6 @@ void APlanet::CreateVerticesRecursive(
 				PitchVerticesUV.Add(UVPs[1] + (t2 * P.X + t3 * P.Y));
 				P = P2 + (d2 * P.X + d3 * P.Y);
 
-				//P.Normalize();
-
 				PitchVertices.Add(P);
 
 				if (i > 0 && j > 0)
@@ -502,9 +477,7 @@ void APlanet::CreateVerticesRecursive(
 			int	i2 = Idx[3 * i + 1];
 			int i3 = Idx[3 * i + 2];
 
-			CreateVerticesRecursive(
-				{P[i1], P[i2], P[i3]}, 
-				{ H[i1], H[i2], H[i3] },
+			CreateVerticesRecursive({P[i1], P[i2], P[i3]}, { H[i1], H[i2], H[i3] },
 				Center, AreaIndex, Size / 2, Depth + 1);
 		}
 	}
@@ -631,17 +604,55 @@ FVector APlanet::GetHitPoint(const FVector &Src, const FVector &Dir)
 		}
 	}
 
-	FIntVector Location = GetHexXY(V.ToVector(), HexDepth);
-	if (Location.X == -1)
-	{
-		return { 0,0,0 };
-	}
-
-	V = Vector3dFromHexXY(Location, HexDepth);
-	V.Normalize();
-
 	V = V * GetTerrainHeight(V);
 	return V.ToVector();
+}
+TArray<FVector> APlanet::GetHitAroundHex(const FVector &Src, const FVector &Dir)
+{
+	TArray<FVector> Ret;
+	FVector Point = GetHitPoint(Src, Dir);
+	if (Point.IsZero()) return Ret;
+
+	FIntVector Location = GetHexXY(Point, HexDepth);
+	if (Location.X == -1)
+	{
+		return Ret;
+	}
+	TArray<FIntVector>  IV = RegularPentagonTriangleAreas[Location.Z].GetHexRound(Location);
+
+	for (FIntVector &Item : IV)
+	{
+		FVectorDouble3D V = Vector3dFromHexXY(Item, HexDepth);
+		V.Normalize();
+		V = V * GetTerrainHeight(V);
+		Ret.Add(V.ToVector());
+	}
+
+	return Ret;
+}
+TArray<FVector> APlanet::GetHitHexPoint(const FVector &Src, const FVector &Dir)
+{
+	TArray<FVector> Ret;
+	FVector Point = GetHitPoint(Src, Dir);
+	if (Point.IsZero()) return Ret;
+
+	FIntVector Location = GetHexXY(Point, HexDepth);
+	if (Location.X == -1)
+	{
+		return Ret;
+	}
+	TArray<FIntVector>  IV = RegularPentagonTriangleAreas[Location.Z].GetHexPoint(Location);
+
+	for (FIntVector &Item : IV)
+	{
+		FVectorDouble3D V = Vector3dFromHexXY(Item, HexDepth);
+		V.Normalize();
+		V = V * GetTerrainHeight(V);
+		Ret.Add(V.ToVector());
+	}
+
+	return Ret;
+
 }
 void APlanet::GetSectionMeshForLOD(int32 LODIndex, int32 SectionId, FRuntimeMeshRenderableMeshData& MeshData)
 {

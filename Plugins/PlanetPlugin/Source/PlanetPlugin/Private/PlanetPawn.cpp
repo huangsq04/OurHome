@@ -141,6 +141,7 @@ void APlanetPawn::ModifyLocation(const FVector &Pos, bool IsModifyHeight)
 
 	FVectorDouble3D LD = RealLocation * GetActorLocation().Size();
 	SetActorLocation(LD.ToVector());
+	SetActorRotation(FRotationMatrix::MakeFromX(GetActorLocation() * -1.0).Rotator());
 }
 
 void APlanetPawn::MovePoint(const FVector &Val)
