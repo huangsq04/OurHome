@@ -196,14 +196,6 @@ int APlanetActor::AddTerrainPoint(const FVectorDouble3D &Point, const FVector2D 
 }
 
 
-FVectorDouble3D ScaleVector(const FVectorDouble3D &V, const FVectorDouble3D &A, const FVectorDouble3D &B, double AngleRad)
-{
-	FVectorDouble3D D = B - A;
-	FVectorDouble3D R = V + D * AngleRad;
-	R.Normalize();
-	return R;
-}
-
 void APlanetActor::UpdateVerticesPoint(int Index, FQuatDouble &QuatD, FVectorDouble3D &CNormal)
 {
 	FVectorDouble3D P = QuatD.RotateVector(TerrainVertices[Index]);

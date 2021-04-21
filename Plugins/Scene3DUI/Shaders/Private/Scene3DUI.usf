@@ -1,0 +1,59 @@
+#include "/Engine/Private/Common.ush"
+Texture2D UITexture;
+SamplerState UITextureSampler;
+Texture2D DepthTexture;
+SamplerState DepthTextureSampler;
+int2   SceneSize;
+int2   UISize;
+float  UIDepth;
+float2 UIStartPos;
+float2 ScreenPercentage;
+
+float GetSceneDepth(float2 ScreenUV)
+{
+    return Texture2DSampleLevel(DepthTexture, DepthTextureSampler, ScreenUV, 0).r;
+}
+
+half LinearToSrgbBranchingChannel(half lin) 
+{
+	if(lin < 0.00313067) return lin * 12.92;
+	return pow(lin, (1.0/2.4)) * 1.055 - 0.055;
+}
+
+void MainVS(
+	float4 InPosition : ATTRIBUTE0,
+	float2 InUV : ATTRIBUTE1,
+	out float2 OutUV : TEXCOORD0,
+	out float4 OutPosition : SV_POSITION
+)
+{
+	OutPosition = InPosition;
+	OutUV = InUV;
+}
+void MainPS(
+	float2 TexCoord : TEXCOORD0,
+	out float4 OutColor : SV_Target0
+	)
+{
+    float x = (UISize.x * 1.0 )/ SceneSize.x;
+    float y = (UISize.y * 1.0) / SceneSize.y;
+
+    float2 coord;
+    coord.x = (UIStartPos.x + TexCoord.x * x) * ScreenPercentage.x;
+    coord.y = (UIStartPos.y + TexCoord.y * y) * ScreenPercentage.y;
+
+    float SceneDepth = GetSceneDepth(coord);
+
+    if(SceneDepth > UIDepth) 
+    {
+        OutColor = float4(0,0,0,0);
+    }
+    else
+    {
+        OutColor = Texture2DSample(UITexture, UITextureSampler, TexCoord);
+		OutColor.x = LinearToSrgbBranchingChannel(OutColor.x);
+		OutColor.y = LinearToSrgbBranchingChannel(OutColor.y);
+		OutColor.z = LinearToSrgbBranchingChannel(OutColor.z);
+    }
+}
+
