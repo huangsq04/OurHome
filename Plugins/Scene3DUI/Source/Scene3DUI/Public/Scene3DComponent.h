@@ -62,9 +62,6 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Scene3DUI")
 	bool bIsPassiveUpdate = false;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Scene3DUI")
-	UTextureRenderTarget2D* OutputRenderTarget;
-
 	float WidgetRenderDeltaTime;
 
 private:

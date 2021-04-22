@@ -266,7 +266,6 @@ FPrimitiveSceneProxy* UScene3DUIComponent::CreateSceneProxy()
 	if (!FPostScene3DUIRender::FScene3DRenderPtr.IsValid())
 	{
 		FPostScene3DUIRender::FScene3DRenderPtr = FSceneViewExtensions::NewExtension<FPostScene3DUIRender>();
-		FPostScene3DUIRender::FScene3DRenderPtr->SetRenderTarget(OutputRenderTarget);
 	}
 
 	float SpriteScale = 1.0f;

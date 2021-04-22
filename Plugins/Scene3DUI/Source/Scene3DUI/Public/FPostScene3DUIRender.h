@@ -63,10 +63,7 @@ public:
 	/** This array is sorted during draw-calls */
 	mutable TArray<FBatched3DUI> UISprites;
 
-	void SetRenderTarget(UTextureRenderTarget2D* v) { OutputRenderTarget = v; };
-
-	UTextureRenderTarget2D* OutputRenderTarget;
-
+	FTexture2DRHIRef DepthTexture;
 
 	static TSharedPtr< class FPostScene3DUIRender, ESPMode::ThreadSafe > FScene3DRenderPtr;
 };

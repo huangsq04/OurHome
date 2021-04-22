@@ -10,6 +10,8 @@
 #include "PostProcess/SceneRenderTargets.h"
 #include "Resources/Version.h"
 #include "Scene3DComponent.h"
+#include "SceneRendering.h"
+#include "RenderTargetPool.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Serialization/MemoryLayout.h"
 
@@ -105,7 +107,7 @@ class FScene3DUIPS : public FGlobalShader
 		FPostScene3DUIRender::FBatched3DUI *Param,
 		FIntRect &IntRect,
 		FIntPoint &SceneSize,
-		FTexture2DRHIRef SceneDepthTexture,
+		FRHITexture*  SceneDepthTexture,
 		FRHIPixelShader * PixelShader = nullptr,
 		bool FlipY = false
 	)
@@ -121,9 +123,7 @@ class FScene3DUIPS : public FGlobalShader
 			return;
 		}
 
-
 		FPlane Plane = Param->Plane;
-
 
 		FIntPoint UISize = FIntPoint(TempResource->GetSizeX(), TempResource->GetSizeY());
 
@@ -142,12 +142,10 @@ class FScene3DUIPS : public FGlobalShader
 		float StartY = Plane.Y;
 		float StartX = Plane.X - X / 2.0;
 
-		if (FlipY)
-		{
-			StartY = -StartY;
-		}
+
 		//UI的开始坐标
 		FVector2D UIStartPos((1.0 + Plane.X - (X / 2.0)) / 2.0, (1.0 - Plane.Y - Y) / 2.0);
+
 
 		FRHIResourceCreateInfo CreateInfo;
 
@@ -165,26 +163,21 @@ class FScene3DUIPS : public FGlobalShader
 		TemplateVertexBuffer buffer;
 		auto& Vertices = buffer.buffer;
 
+		if (FlipY)
+		{
+			StartY = -StartY;
+			Y = -Y;
+		}
 		Vertices[0].Position = FVector4(StartX, StartY + Y, 0.0, 1.0f);
 		Vertices[1].Position = FVector4(StartX + X, StartY + Y, 0.0, 1.0f);
 		Vertices[2].Position = FVector4(StartX, StartY, 0.0, 1.0f);
 		Vertices[3].Position = FVector4(StartX + X, StartY, 0.0, 1.0f);
 
-		if (FlipY)
-		{
-			UIStartPos.Y = 1.0 - UIStartPos.Y;
-			Vertices[0].UV = FVector2D(0, 1);
-			Vertices[1].UV = FVector2D(1, 1);
-			Vertices[2].UV = FVector2D(0, 0);
-			Vertices[3].UV = FVector2D(1, 0);
-		}
-		else
-		{
-			Vertices[0].UV = FVector2D(0, 0);
-			Vertices[1].UV = FVector2D(1, 0);
-			Vertices[2].UV = FVector2D(0, 1);
-			Vertices[3].UV = FVector2D(1, 1);
-		}
+		Vertices[0].UV = FVector2D(0, 0);
+		Vertices[1].UV = FVector2D(1, 0);
+		Vertices[2].UV = FVector2D(0, 1);
+		Vertices[3].UV = FVector2D(1, 1);
+
 		CreateInfo.ResourceArray = &buffer;
 		CreateInfo.DebugName = TEXT("Scene3DUI Vertex Buffer");
 		FVertexBufferRHIRef VertexBufferRHI = RHICreateVertexBuffer(sizeof(FTextureVertex) * 4, BUF_Volatile, CreateInfo);
@@ -252,7 +245,14 @@ void FPostScene3DUIRender::PostRenderBasePass_RenderThread(FRHICommandListImmedi
 	if (InView.Family->Views.Num() == 1)
 	{
 		FIntRect IntRect = InView.Family->Views[0]->UnscaledViewRect;
-		//RenderUI(RHICmdList, IntRect);
+		FSceneRenderTargets& SceneContext = FSceneRenderTargets::Get(RHICmdList);
+		FTexture2DRHIRef SceneDepthTexture = SceneContext.GetSceneDepthTexture();
+		FResolveParams ResolveParams;
+
+		FRHIResourceCreateInfo TexInfo;
+		FIntPoint IntPoint = SceneDepthTexture->GetTexture2D()->GetSizeXY();
+		DepthTexture = RHICreateTexture2D(IntPoint.X, IntPoint.Y, PF_DepthStencil, 1, 1, TexCreate_ShaderResource, TexInfo);
+		RHICmdList.CopyToResolveTarget(SceneDepthTexture, DepthTexture, ResolveParams);
 	}
 }
 /** 
@@ -327,8 +327,9 @@ void FPostScene3DUIRender::RenderUI(FRHICommandListImmediate& RHICmdList, FIntRe
 	UISprites.Sort(FCompareDepth());
 	FSceneRenderTargets& SceneContext = FSceneRenderTargets::Get(RHICmdList);
 	FTexture2DRHIRef SceneDepthTexture = SceneContext.GetSceneDepthSurface();
-
 	FIntPoint SceneSize = SceneDepthTexture->GetTexture2D()->GetSizeXY();
+
+	FResolveParams ResolveParams;
 
 	FRHIRenderPassInfo RPInfo(RenderTargetTexture, ERenderTargetActions::Load_Store);
 	TransitionRenderPassTargets(RHICmdList, RPInfo);
@@ -346,9 +347,6 @@ void FPostScene3DUIRender::RenderUI(FRHICommandListImmediate& RHICmdList, FIntRe
 	//GraphicsPSOInit.BlendState = TStaticBlendState<>::GetRHI();
 	GraphicsPSOInit.RasterizerState = TStaticRasterizerState<>::GetRHI();
 	GraphicsPSOInit.DepthStencilState = TStaticDepthStencilState<false, CF_Always>::GetRHI();
-
-	static const FName RendererModuleName("Renderer");
-	IRendererModule* RendererModule = FModuleManager::GetModulePtr<IRendererModule>(RendererModuleName);
 
 	{
 		FVertexDeclarationElementList FDE;
@@ -375,7 +373,7 @@ void FPostScene3DUIRender::RenderUI(FRHICommandListImmediate& RHICmdList, FIntRe
 			Cast<UScene3DUIComponent>(UISprites[i].Component) != nullptr)
 		{
 			UIPS->DrawUI(RHICmdList, &UISprites[i], IntRect, SceneSize,
-				SceneDepthTexture, UIPS.GetPixelShader(), FlipY);
+				DepthTexture, UIPS.GetPixelShader(), FlipY);
 		}
 	}
 	RHICmdList.EndRenderPass();
